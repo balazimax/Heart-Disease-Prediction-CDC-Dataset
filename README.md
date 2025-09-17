@@ -1,7 +1,7 @@
 **Heart Disease Risk Prediction Using Machine Learning**
 
 This repository contains the code, methodology, and findings from my MSc dissertation:
-"Analysing the Risk of Heart Disease Associated with Co-morbidities Using Machine Learning and Prediction" (University of Wolverhampton, June 2025).
+"Analysing the Risk of Heart Disease Associated with Co-morbidities Using Machine Learning and Prediction" .
 
 **📖 Project Overview**
 
