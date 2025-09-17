@@ -1,0 +1,48 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+from pytorch_tabnet.tab_model import TabNetClassifier
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+import torch
+
+df = pd.read_csv("diabetes_binary_5050split_health_indicators_BRFSS2015.csv")
+X = df.drop(columns=["HeartDiseaseorAttack"])
+y = df["HeartDiseaseorAttack"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, stratify=y, test_size=0.2, random_state=42
+)
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+smote = SMOTE(random_state=42)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
+
+X_train_tab = X_train.values
+X_test_tab = X_test.values
+
+clf = TabNetClassifier()
+clf.fit(
+    X_train=X_train_tab, y_train=y_train.values,
+    eval_set=[(X_test_tab, y_test.values)],
+    eval_name=["val"], eval_metric=["auc"],
+    max_epochs=50, patience=5, batch_size=1024, virtual_batch_size=128
+)
+
+def tabnet_predict(x):
+    return clf.predict_proba(x)
+
+X_test_np = X_test.values
+
+y_pred = clf.predict(X_test_np)
+y_proba = clf.predict_proba(X_test_np)[:, 1]
+
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+roc_auc = roc_auc_score(y_test, y_proba)
+print(f"ROC AUC Score: {roc_auc:.4f}")
+
