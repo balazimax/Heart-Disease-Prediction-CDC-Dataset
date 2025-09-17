@@ -1,0 +1,146 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer, KNNImputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from xgboost import XGBClassifier
+from sklearn.metrics import classification_report, roc_auc_score, roc_curve
+from sklearn.feature_selection import RFE
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+import shap
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder
+
+import warnings
+warnings.filterwarnings("ignore")
+
+df = pd.read_csv('diabetes_binary_5050split_health_indicators_BRFSS2015.csv')
+print(df.shape)
+df.head()
+
+X = df.drop(columns=['HeartDiseaseorAttack'])
+y = df['HeartDiseaseorAttack']
+
+# Imputation (simple and KNN)
+num_features = X.select_dtypes(include=['float64', 'int64']).columns
+num_imputer = KNNImputer(n_neighbors=5)
+
+# Outlier capping using percentiles
+for col in num_features:
+    lower, upper = X[col].quantile([0.01, 0.99])
+    X[col] = np.clip(X[col], lower, upper)
+
+# Scaling
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Apply SMOTE
+sm = SMOTE(random_state=42)
+X_res, y_res = sm.fit_resample(X_scaled, y)
+
+lr = LogisticRegression()
+rfe = RFE(estimator=lr, n_features_to_select=15)
+rfe.fit(X_res, y_res)
+selected_features = X.columns[rfe.support_]
+print("Selected Features:", selected_features)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X_res[:, rfe.support_], y_res, test_size=0.2, random_state=42, stratify=y_res
+)
+
+models = {
+    "Logistic Regression": LogisticRegression(),
+    "Random Forest": RandomForestClassifier(n_estimators=100),
+    "KNN": KNeighborsClassifier(n_neighbors=5),
+    "SVM": SVC(probability=True),
+    "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+}
+
+for name, model in models.items():
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+    proba = model.predict_proba(X_test)[:, 1]
+    print(f"\n{name}")
+    print(classification_report(y_test, preds))
+    print("ROC AUC Score:", roc_auc_score(y_test, proba))
+
+model = Sequential([
+    Dense(128, activation='relu', input_shape=(X_train.shape[1],)),
+    BatchNormalization(),
+    Dropout(0.2),
+    Dense(64, activation='relu'),
+    BatchNormalization(),
+    Dropout(0.2),
+    Dense(32, activation='relu'),
+    Dropout(0.2),
+    Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+
+early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+history = model.fit(
+    X_train, y_train, 
+    validation_split=0.2,
+    epochs=100,
+    batch_size=32,
+    callbacks=[early_stop],
+    verbose=1
+)
+
+# Evaluate on test
+dnn_preds = model.predict(X_test).flatten()
+dnn_preds_binary = (dnn_preds > 0.5).astype(int)
+print(classification_report(y_test, dnn_preds_binary))
+print("ROC AUC Score:", roc_auc_score(y_test, dnn_preds))
+
+import shap
+
+# Use TreeExplainer for tree-based models like XGBoost
+explainer = shap.Explainer(models["XGBoost"])
+
+# Compute SHAP values on test set
+shap_values = explainer(X_test)
+
+# Visualize feature importance with summary plot
+shap.summary_plot(shap_values, X_test, feature_names=selected_features)
+
+# Ensure X_test is a DataFrame
+X_test_df = pd.DataFrame(X_test, columns=selected_features)
+
+# Re-run SHAP explainer using DataFrame
+explainer = shap.Explainer(models["XGBoost"])
+shap_values = explainer(X_test_df)
+
+# Now plot with names
+shap.plots.bar(shap_values, max_display=15)
+
+# Convert X_test to DataFrame so we can use iloc and feature names
+X_test_df = pd.DataFrame(X_test, columns=selected_features)
+
+# Now use SHAP with DataFrame
+i = 0
+shap.initjs()
+shap.force_plot(
+    explainer.expected_value,
+    shap_values.values[i],
+    X_test_df.iloc[i],
+    feature_names=selected_features
+)
+
